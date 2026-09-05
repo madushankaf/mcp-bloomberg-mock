@@ -108,8 +108,11 @@ authentication, rate limiting and observability. The defaults are already gatewa
 - `MCP_API_KEY` — optional shared secret between the gateway and this server, accepted as
   `x-api-key: <key>` or `Authorization: Bearer <key>`; anything else gets 401. `/healthz`
   stays open for probes.
-- DNS-rebinding protection is off by default, because behind a proxy the `Host` header is the
-  gateway's, not yours. Set `MCP_ALLOWED_HOSTS=bloomberg-mcp:8000,localhost:*` to turn it on.
+- DNS-rebinding protection is explicitly disabled unless you set `MCP_ALLOWED_HOSTS`, because
+  behind a proxy the `Host` header is the gateway's, not yours. Leaving it to the SDK default
+  is not the same thing: `streamable_http_app` then auto-enables a localhost-only allowlist and
+  answers `421 Invalid Host header` to every proxied request. Set
+  `MCP_ALLOWED_HOSTS=bloomberg-mcp:8000,localhost:*` to turn it back on.
 
 ### Container
 

@@ -285,22 +285,28 @@ class ApiKeyMiddleware:
 
 def build_app() -> Any:
     """Starlette ASGI app serving MCP at settings.mcp_path."""
-    transport_security = None
-    if settings.allowed_hosts or settings.allowed_origins:
-        from mcp.server.transport_security import TransportSecuritySettings
+    from mcp.server.transport_security import TransportSecuritySettings
 
+    if settings.allowed_hosts or settings.allowed_origins:
         transport_security = TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=settings.allowed_hosts,
             allowed_origins=settings.allowed_origins,
         )
         log.info("DNS rebinding protection on; allowed hosts: %s", settings.allowed_hosts)
+    else:
+        # Explicitly OFF, not left to the SDK's default. Passing None here makes
+        # streamable_http_app auto-enable a localhost-only allowlist, which answers
+        # 421 "Invalid Host header" to everything a gateway forwards - and passes
+        # local testing, because that sends Host: localhost.
+        transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
     app: Any = mcp.streamable_http_app(
         streamable_http_path=settings.mcp_path,
         stateless_http=settings.stateless,
         json_response=settings.json_response,
         transport_security=transport_security,
+        host=settings.http_host,
     )
     if settings.api_key:
         app = ApiKeyMiddleware(app, settings.api_key, settings.api_key_header)
