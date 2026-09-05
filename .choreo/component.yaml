@@ -1,0 +1,83 @@
+# Choreo component configuration.
+# Docs: https://wso2.com/choreo/docs/develop-components/manage-component-source-configurations/
+# For a Docker component this file lives at <docker-context-path>/.choreo/component.yaml.
+
+# +required The configuration file schema version
+schemaVersion: 1.2
+
+# +required Incoming connection details for the component
+endpoints:
+  # +required Unique name for the endpoint, used when generating the managed API.
+  - name: bloomberg-mcp
+    # +optional Display name for the endpoint.
+    displayName: Bloomberg MCP
+    # +required Service section has the endpoint details.
+    service:
+      # +optional Base path of the API exposed via the endpoint. Mandatory for REST.
+      # Kept at "/" so the OpenAPI path /mcp lands on the container's /mcp and the
+      # public invoke URL ends in /mcp - which is what MCP clients must be given.
+      basePath: /
+      # +required Port the container listens on. Must match MCP_HTTP_PORT.
+      port: 8000
+    # +required Type of traffic the endpoint accepts.
+    # Allowed values: REST, GraphQL, GRPC, TCP, UDP.
+    type: REST
+    # +optional Network level visibilities of the endpoint.
+    # Accepted values: Project|Organization|Public(Default).
+    networkVisibilities:
+      - Public
+    # +optional Path to the schema definition file, relative to the docker context.
+    # Choreo only routes the paths declared here, so /mcp and /healthz must both appear.
+    schemaFilePath: openapi.yaml
+
+# +optional Runtime configuration surfaced in the Choreo deploy-time config form.
+# Every value is optional: leaving a field blank falls back to the image default,
+# because the server treats an empty environment variable as unset.
+configurations:
+  env:
+    # --- Bloomberg connection ---
+    - name: BLOOMBERG_MODE
+      valueFrom:
+        configForm:
+          displayName: Backend mode (auto | blpapi | mock)
+          type: string
+          required: false
+    - name: BLOOMBERG_HOST
+      valueFrom:
+        configForm:
+          displayName: Bloomberg SAPI/B-PIPE host
+          type: string
+          required: false
+    - name: BLOOMBERG_PORT
+      valueFrom:
+        configForm:
+          displayName: Bloomberg SAPI/B-PIPE port (default 8194)
+          type: number
+          required: false
+    - name: BLOOMBERG_AUTH_OPTIONS
+      valueFrom:
+        configForm:
+          displayName: B-PIPE authentication options string
+          type: secret
+          required: false
+    - name: BLOOMBERG_TIMEOUT_MS
+      valueFrom:
+        configForm:
+          displayName: Per-request timeout in milliseconds (default 30000)
+          type: number
+          required: false
+    # --- Transport ---
+    # Choreo's gateway fronts this service, so the backend secret is optional:
+    # set it for defence in depth on top of the managed API's own auth.
+    - name: MCP_API_KEY
+      valueFrom:
+        configForm:
+          displayName: Shared secret required on /mcp (x-api-key or Bearer)
+          type: secret
+          required: false
+    - name: LOG_LEVEL
+      valueFrom:
+        configForm:
+          displayName: Log level (debug | info | warning | error)
+          type: string
+          required: false

@@ -1,0 +1,369 @@
+openapi: 3.0.3
+info:
+  title: Bloomberg MCP Server
+  description: |
+    Model Context Protocol (MCP) server exposing Bloomberg market and reference data,
+    backed by Bloomberg's own BLPAPI (the Bloomberg Open API).
+
+    The transport is **MCP streamable HTTP**: a single JSON-RPC 2.0 endpoint at `/mcp`.
+    The server runs stateless with JSON responses, so each POST is a complete call -
+    no `initialize` handshake and no `Mcp-Session-Id` header to carry between requests.
+
+    Every request must send `Content-Type: application/json` and an `Accept` header
+    listing **both** `application/json` and `text/event-stream`, as the MCP spec requires.
+
+    Available tools (call via `method: tools/call`):
+    `bloomberg_status`, `get_reference_data`, `get_historical_data`, `get_intraday_bars`,
+    `get_intraday_ticks`, `search_instruments`, `search_fields`, `run_equity_screen`.
+  version: 0.1.0
+  contact:
+    name: Bloomberg MCP
+servers:
+  - url: http://localhost:8000
+    description: Local container
+
+tags:
+  - name: mcp
+    description: MCP streamable HTTP transport
+  - name: health
+    description: Liveness and backend status
+
+paths:
+  /mcp:
+    post:
+      tags: [mcp]
+      operationId: mcpRpc
+      summary: MCP JSON-RPC endpoint
+      description: |
+        Accepts any MCP JSON-RPC 2.0 request. The common methods are `tools/list`
+        (enumerate the tools and their input schemas), `tools/call` (invoke one),
+        `resources/list` and `resources/read` (the `bloomberg://cheatsheet` reference).
+      parameters:
+        - $ref: '#/components/parameters/AcceptHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JsonRpcRequest'
+            examples:
+              toolsList:
+                summary: List the available tools
+                value:
+                  jsonrpc: "2.0"
+                  id: 1
+                  method: tools/list
+              referenceData:
+                summary: Current price and name for two securities
+                value:
+                  jsonrpc: "2.0"
+                  id: 2
+                  method: tools/call
+                  params:
+                    name: get_reference_data
+                    arguments:
+                      securities: ["IBM US Equity", "AAPL US Equity"]
+                      fields: ["NAME", "PX_LAST", "CRNCY"]
+              historicalData:
+                summary: Daily close series
+                value:
+                  jsonrpc: "2.0"
+                  id: 3
+                  method: tools/call
+                  params:
+                    name: get_historical_data
+                    arguments:
+                      securities: ["AAPL US Equity"]
+                      fields: ["PX_LAST", "VOLUME"]
+                      start_date: "2024-01-02"
+                      end_date: "2024-01-31"
+                      periodicity: DAILY
+              searchInstruments:
+                summary: Resolve a name to a Bloomberg ticker
+                value:
+                  jsonrpc: "2.0"
+                  id: 4
+                  method: tools/call
+                  params:
+                    name: search_instruments
+                    arguments:
+                      query: apple
+                      yellow_key: EQTY
+                      max_results: 5
+              status:
+                summary: Is the server on real Bloomberg or mock data?
+                value:
+                  jsonrpc: "2.0"
+                  id: 5
+                  method: tools/call
+                  params:
+                    name: bloomberg_status
+                    arguments: {}
+      responses:
+        '200':
+          description: |
+            JSON-RPC response. A tool that fails in an anticipated way still returns
+            200 with `result.isError: true` and an explanatory message - that is the
+            MCP contract, so the calling model can read and correct the error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+              examples:
+                toolResult:
+                  summary: Successful get_reference_data call
+                  value:
+                    jsonrpc: "2.0"
+                    id: 2
+                    result:
+                      content:
+                        - type: text
+                          text: '{"securities": [...]}'
+                      isError: false
+                      structuredContent:
+                        securities:
+                          - security: IBM US Equity
+                            fields:
+                              NAME: INTL BUSINESS MACHINES CORP
+                              PX_LAST: 106.24
+                              CRNCY: USD
+                            fieldExceptions: []
+                            error: null
+                toolError:
+                  summary: Anticipated tool failure
+                  value:
+                    jsonrpc: "2.0"
+                    id: 3
+                    result:
+                      content:
+                        - type: text
+                          text: "Error executing tool get_historical_data: Invalid date '15-01-2024'; expected YYYY-MM-DD"
+                      isError: true
+        '400':
+          description: Malformed request, or a missing/incorrect Content-Type header.
+        '401':
+          description: Missing or invalid API key, when MCP_API_KEY is configured.
+        '406':
+          description: Accept header did not list both application/json and text/event-stream.
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - {}
+
+    get:
+      tags: [mcp]
+      operationId: mcpStream
+      summary: Server-sent event stream (stateful mode only)
+      description: |
+        Opens the server-to-client SSE stream of the streamable HTTP transport.
+        Unused in the default stateless configuration (`MCP_STATELESS=true`), and
+        declared here so the route still resolves if stateless mode is turned off.
+      parameters:
+        - $ref: '#/components/parameters/AcceptHeader'
+        - $ref: '#/components/parameters/SessionIdHeader'
+      responses:
+        '200':
+          description: SSE stream of server-initiated messages.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '405':
+          description: Streaming is not available in stateless mode.
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - {}
+
+    delete:
+      tags: [mcp]
+      operationId: mcpTerminateSession
+      summary: Terminate an MCP session (stateful mode only)
+      parameters:
+        - $ref: '#/components/parameters/SessionIdHeader'
+      responses:
+        '200':
+          description: Session terminated.
+        '405':
+          description: No sessions exist in stateless mode.
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - {}
+
+  /healthz:
+    get:
+      tags: [health]
+      operationId: health
+      summary: Liveness probe and backend status
+      description: |
+        Never requires authentication, so Choreo's probes always reach it. Reports
+        which backend is live - a real BLPAPI session, or the mock data fallback.
+      responses:
+        '200':
+          description: Server is up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              examples:
+                mock:
+                  summary: Running on mock data (no Bloomberg reachable)
+                  value:
+                    status: ok
+                    mcp_path: /mcp
+                    backend:
+                      backend: mock
+                      mock: true
+                      connected: true
+                      reason: blpapi is not installed.
+                live:
+                  summary: Connected to Bloomberg
+                  value:
+                    status: ok
+                    mcp_path: /mcp
+                    backend:
+                      backend: blpapi
+                      host: bpipe-host.internal
+                      port: 8194
+                      connected: true
+                      authenticated: true
+                      services_open: ["//blp/refdata"]
+        '503':
+          description: Server is up but the backend could not be resolved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+      security: []
+
+components:
+  parameters:
+    AcceptHeader:
+      name: Accept
+      in: header
+      required: true
+      description: Must list both application/json and text/event-stream.
+      schema:
+        type: string
+        default: application/json, text/event-stream
+    SessionIdHeader:
+      name: Mcp-Session-Id
+      in: header
+      required: false
+      description: Session identifier. Only used when MCP_STATELESS is false.
+      schema:
+        type: string
+
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: Shared secret between the gateway and this server (MCP_API_KEY).
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: The same MCP_API_KEY presented as a bearer token.
+
+  schemas:
+    JsonRpcRequest:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc:
+          type: string
+          enum: ["2.0"]
+        id:
+          description: Omit for notifications; any request expecting a reply needs one.
+          oneOf:
+            - type: string
+            - type: integer
+        method:
+          type: string
+          description: MCP method name.
+          example: tools/call
+        params:
+          type: object
+          description: Method parameters. For tools/call, `name` and `arguments`.
+          properties:
+            name:
+              type: string
+              description: Tool name, for tools/call.
+              example: get_reference_data
+            arguments:
+              type: object
+              description: Tool arguments, matching that tool's input schema.
+              additionalProperties: true
+          additionalProperties: true
+      additionalProperties: false
+
+    JsonRpcResponse:
+      type: object
+      required: [jsonrpc]
+      properties:
+        jsonrpc:
+          type: string
+          enum: ["2.0"]
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+        result:
+          $ref: '#/components/schemas/ToolCallResult'
+        error:
+          $ref: '#/components/schemas/JsonRpcError'
+
+    ToolCallResult:
+      type: object
+      description: Shape returned by tools/call. Other methods return their own result objects.
+      properties:
+        content:
+          type: array
+          description: Human-readable rendering of the result.
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                example: text
+              text:
+                type: string
+        structuredContent:
+          type: object
+          description: The machine-readable payload. Carries "mock":true when data is synthetic.
+          additionalProperties: true
+        isError:
+          type: boolean
+          description: True when the tool failed in an anticipated way; content holds the reason.
+      additionalProperties: true
+
+    JsonRpcError:
+      type: object
+      description: Protocol-level failure, as opposed to a tool-level one.
+      properties:
+        code:
+          type: integer
+          example: -32601
+        message:
+          type: string
+          example: Method not found
+        data:
+          type: object
+          additionalProperties: true
+
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        mcp_path:
+          type: string
+          example: /mcp
+        backend:
+          type: object
+          description: Live backend details; `backend` is "blpapi" or "mock".
+          additionalProperties: true
+        error:
+          type: string
