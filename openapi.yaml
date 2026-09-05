@@ -145,10 +145,7 @@ paths:
           description: Missing or invalid API key, when MCP_API_KEY is configured.
         '406':
           description: Accept header did not list both application/json and text/event-stream.
-      security:
-        - apiKeyAuth: []
-        - bearerAuth: []
-        - {}
+      security: []
 
     get:
       tags: [mcp]
@@ -170,10 +167,7 @@ paths:
                 type: string
         '405':
           description: Streaming is not available in stateless mode.
-      security:
-        - apiKeyAuth: []
-        - bearerAuth: []
-        - {}
+      security: []
 
     delete:
       tags: [mcp]
@@ -186,10 +180,7 @@ paths:
           description: Session terminated.
         '405':
           description: No sessions exist in stateless mode.
-      security:
-        - apiKeyAuth: []
-        - bearerAuth: []
-        - {}
+      security: []
 
   /healthz:
     get:
